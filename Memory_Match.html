@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Memory Match - Greedy vs Human</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #1a202c;
+            color: #e2e8f0;
+        }
+        .card {
+            width: 80px;
+            height: 100px;
+            perspective: 1000px;
+            cursor: pointer;
+        }
+        .card-inner {
+            width: 100%;
+            height: 100%;
+            transition: transform 0.6s;
+            transform-style: preserve-3d;
+            position: relative;
+        }
+        .card-inner.is-flipped {
+            transform: rotateY(180deg);
+        }
+        .card-face {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            backface-visibility: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 2.5rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+        }
+        .card-back {
+            background-color: #4a5568;
+            border: 2px solid #a0aec0;
+        }
+        .card-front {
+            background-color: #cbd5e0;
+            color: #2d3748;
+            transform: rotateY(180deg);
+        }
+        .match-glow {
+            animation: matchGlow 1.5s ease-in-out forwards;
+        }
+        .message-box {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 100;
+            padding: 1.5rem 2.5rem;
+            background-color: #2d3748;
+            border: 2px solid #4a5568;
+            border-radius: 12px;
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.5);
+        }
+        @keyframes matchGlow {
+            0% { box-shadow: 0 0 10px #f6e05e; }
+            50% { box-shadow: 0 0 30px #f6e05e, 0 0 40px #f6e05e; }
+            100% { box-shadow: 0 0 10px #f6e05e; }
+        }
+        .fade-out {
+            opacity: 0;
+            transition: opacity 1s ease-out;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100 flex flex-col items-center justify-center min-h-screen p-4">
+
+    <div id="game-container" class="bg-gray-800 p-8 rounded-xl shadow-2xl w-full max-w-2xl text-center">
+        <h1 class="text-4xl font-bold mb-4 text-yellow-400">Memory Match</h1>
+        <p class="text-lg mb-6">Play against a greedy, memory-based algorithm. Click two cards to find a match!</p>
+        <div class="flex items-center justify-center text-lg space-x-8 mb-6">
+            <div>
+                <span class="font-semibold text-blue-400">Player Tries:</span>
+                <span id="human-tries" class="ml-2 font-bold">0</span>
+            </div>
+            <div>
+                <span class="font-semibold text-green-400">Computer Tries:</span>
+                <span id="computer-tries" class="ml-2 font-bold">0</span>
+            </div>
+        </div>
+        <div id="board-grid" class="grid gap-4 justify-center"></div>
+        <div id="game-message" class="mt-6 text-xl font-semibold text-red-400"></div>
+    </div>
+
+    <div id="message-box" class="message-box hidden">
+        <h3 id="message-title" class="text-xl font-bold mb-2"></h3>
+        <p id="message-text" class="text-base"></p>
+        <button id="close-message" class="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg shadow-md transition-colors duration-200">OK</button>
+    </div>
+
+    <script>
+        const boardSize = 4;
+        const cardValues = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+        const totalPairs = (boardSize * boardSize) / 2;
+        let board = [];
+        let flippedCards = [];
+        let humanTries = 0;
+        let computerTries = 0;
+        let isHumanTurn = true;
+        let isProcessing = false;
+        let computerMemory = {};
+
+        const boardGrid = document.getElementById('board-grid');
+        const humanTriesEl = document.getElementById('human-tries');
+        const computerTriesEl = document.getElementById('computer-tries');
+        const gameMessageEl = document.getElementById('game-message');
+        const messageBox = document.getElementById('message-box');
+        const messageTitle = document.getElementById('message-title');
+        const messageText = document.getElementById('message-text');
+        const closeMessageBtn = document.getElementById('close-message');
+
+        function showMessageBox(title, message) {
+            messageTitle.textContent = title;
+            messageText.textContent = message;
+            messageBox.classList.remove('hidden');
+            gameMessageEl.textContent = '';
+        }
+
+        function generateBoard() {
+            let allCards = [...cardValues, ...cardValues];
+            allCards.sort(() => 0.5 - Math.random());
+            let tempBoard = [];
+            for (let i = 0; i < boardSize; i++) {
+                let row = [];
+                for (let j = 0; j < boardSize; j++) {
+                    row.push({
+                        value: allCards.pop(),
+                        isFlipped: false,
+                        isMatched: false,
+                        id: `${i}-${j}`
+                    });
+                }
+                tempBoard.push(row);
+            }
+            return tempBoard;
+        }
+
+        function renderBoard() {
+            boardGrid.innerHTML = '';
+            boardGrid.style.gridTemplateColumns = `repeat(${boardSize}, 1fr)`;
+            board.forEach((row, rIdx) => {
+                row.forEach((card, cIdx) => {
+                    const cardElement = document.createElement('div');
+                    cardElement.classList.add('card');
+                    cardElement.dataset.row = rIdx;
+                    cardElement.dataset.col = cIdx;
+                    cardElement.innerHTML = `
+                        <div class="card-inner ${card.isFlipped ? 'is-flipped' : ''}">
+                            <div class="card-face card-back"></div>
+                            <div class="card-face card-front text-4xl font-bold">${card.value}</div>
+                        </div>
+                    `;
+                    if (!card.isMatched) {
+                        cardElement.addEventListener('click', handleCardClick);
+                    } else {
+                        cardElement.querySelector('.card-inner').classList.add('is-flipped');
+                        cardElement.querySelector('.card-inner').classList.add('match-glow');
+                        cardElement.style.opacity = '0.5';
+                        cardElement.style.cursor = 'default';
+                    }
+                    boardGrid.appendChild(cardElement);
+                });
+            });
+        }
+
+        function handleCardClick(event) {
+            if (isProcessing || !isHumanTurn || flippedCards.length >= 2) {
+                return;
+            }
+
+            isProcessing = true;
+            const cardElement = event.currentTarget;
+            const r = parseInt(cardElement.dataset.row);
+            const c = parseInt(cardElement.dataset.col);
+            const card = board[r][c];
+
+            if (card.isFlipped || card.isMatched) {
+                isProcessing = false;
+                return;
+            }
+
+            card.isFlipped = true;
+            flippedCards.push(card);
+            cardElement.querySelector('.card-inner').classList.add('is-flipped');
+
+            if (flippedCards.length === 2) {
+                humanTries++;
+                humanTriesEl.textContent = humanTries;
+                checkForMatch();
+            } else {
+                isProcessing = false;
+            }
+        }
+
+        function checkForMatch() {
+            const [card1, card2] = flippedCards;
+            if (card1.value === card2.value) {
+                card1.isMatched = true;
+                card2.isMatched = true;
+                gameMessageEl.textContent = "It's a match! Your turn again.";
+                setTimeout(() => {
+                    flippedCards = [];
+                    renderBoard();
+                    isProcessing = false;
+                    checkGameOver();
+                }, 1000);
+            } else {
+                gameMessageEl.textContent = "No match. Computer's turn.";
+                setTimeout(() => {
+                    card1.isFlipped = false;
+                    card2.isFlipped = false;
+                    flippedCards = [];
+                    renderBoard();
+                    isHumanTurn = false;
+                    isProcessing = false;
+                    setTimeout(computerMove, 1000);
+                }, 1500);
+            }
+        }
+
+        function computerMove() {
+            isProcessing = true;
+            let pos1, pos2;
+            let foundMatch = false;
+
+            for (const value in computerMemory) {
+                if (computerMemory[value].length === 2) {
+                    pos1 = computerMemory[value][0];
+                    pos2 = computerMemory[value][1];
+                    delete computerMemory[value];
+                    foundMatch = true;
+                    break;
+                }
+            }
+            
+            if (!foundMatch) {
+                for (const value in computerMemory) {
+                    if (computerMemory[value].length === 1) {
+                        pos1 = computerMemory[value][0];
+                        
+                        for (let r = 0; r < boardSize; r++) {
+                            for (let c = 0; c < boardSize; c++) {
+                                if (!board[r][c].isFlipped && !board[r][c].isMatched && (r !== pos1.r || c !== pos1.c)) {
+                                    if (board[r][c].value === value) {
+                                        pos2 = { r, c };
+                                        foundMatch = true;
+                                        delete computerMemory[value];
+                                        break;
+                                    }
+                                }
+                            }
+                            if (foundMatch) break;
+                        }
+                    }
+                    if (foundMatch) break;
+                }
+            }
+
+            if (!foundMatch) {
+                const unrevealedCards = [];
+                for (let r = 0; r < boardSize; r++) {
+                    for (let c = 0; c < boardSize; c++) {
+                        if (!board[r][c].isFlipped && !board[r][c].isMatched) {
+                            unrevealedCards.push({ r, c });
+                        }
+                    }
+                }
+                
+                const idx1 = Math.floor(Math.random() * unrevealedCards.length);
+                pos1 = unrevealedCards[idx1];
+                unrevealedCards.splice(idx1, 1);
+                const idx2 = Math.floor(Math.random() * unrevealedCards.length);
+                pos2 = unrevealedCards[idx2];
+            }
+
+            const card1 = board[pos1.r][pos1.c];
+            const card2 = board[pos2.r][pos2.c];
+            
+            card1.isFlipped = true;
+            card2.isFlipped = true;
+            renderBoard();
+
+            computerTries++;
+            computerTriesEl.textContent = computerTries;
+
+            setTimeout(() => {
+                if (card1.value === card2.value) {
+                    card1.isMatched = true;
+                    card2.isMatched = true;
+                    gameMessageEl.textContent = "Computer found a match! Computer's turn again.";
+                    setTimeout(() => {
+                        renderBoard();
+                        isProcessing = false;
+                        checkGameOver();
+                        setTimeout(computerMove, 1000);
+                    }, 1000);
+                } else {
+                    updateComputerMemory(pos1, card1.value);
+                    updateComputerMemory(pos2, card2.value);
+                    
+                    gameMessageEl.textContent = "Computer didn't find a match. Your turn.";
+                    setTimeout(() => {
+                        card1.isFlipped = false;
+                        card2.isFlipped = false;
+                        renderBoard();
+                        isHumanTurn = true;
+                        isProcessing = false;
+                    }, 1500);
+                }
+            }, 1500);
+        }
+
+        function updateComputerMemory(pos, value) {
+            if (!computerMemory[value]) {
+                computerMemory[value] = [];
+            }
+            if (!computerMemory[value].some(p => p.r === pos.r && p.c === pos.c)) {
+                computerMemory[value].push(pos);
+            }
+        }
+
+        function checkGameOver() {
+            let matchedCount = 0;
+            board.forEach(row => {
+                row.forEach(card => {
+                    if (card.isMatched) {
+                        matchedCount++;
+                    }
+                });
+            });
+
+            if (matchedCount === boardSize * boardSize) {
+                let winnerMessage = "";
+                if (humanTries < computerTries) {
+                    winnerMessage = "Congratulations! You won!";
+                } else if (computerTries < humanTries) {
+                    winnerMessage = "The computer won!";
+                } else {
+                    winnerMessage = "It's a tie!";
+                }
+                showMessageBox("Game Over!", winnerMessage + `\n\nFinal Tries:\n- You: ${humanTries}\n- Computer: ${computerTries}`);
+            }
+        }
+        
+        closeMessageBtn.addEventListener('click', () => {
+            messageBox.classList.add('hidden');
+            resetGame();
+        });
+
+        function resetGame() {
+            humanTries = 0;
+            computerTries = 0;
+            isHumanTurn = true;
+            isProcessing = false;
+            flippedCards = [];
+            computerMemory = {};
+            humanTriesEl.textContent = humanTries;
+            computerTriesEl.textContent = computerTries;
+            gameMessageEl.textContent = "Your turn. Click on two cards.";
+            board = generateBoard();
+            renderBoard();
+        }
+
+        window.onload = () => {
+            resetGame();
+        };
+    </script>
+</body>
+</html>
